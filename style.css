@@ -137,6 +137,31 @@ body.role-remote [data-only=camera],
 body.role-camera [data-only=remote] { display: none !important; }
 [hidden] { display: none !important; }
 
+#controls {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  width: min(560px, calc(100% - 16px));
+  background: rgba(0, 0, 0, 0.78);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px 12px;
+  z-index: 1;
+}
+.control {
+  display: grid;
+  grid-template-columns: 74px 56px 1fr 64px;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+.control > span { color: var(--dim); }
+.control button { padding: 3px 8px; font-size: 12px; }
+.control input[type=range] { width: 100%; }
+.control output { text-align: right; font-variant-numeric: tabular-nums; }
+.control.auto input[type=range], .control.auto output { opacity: 0.45; }
+
 @media (orientation: landscape) and (max-height: 600px) {
   body {
     grid-template-rows: 100dvh;
@@ -172,4 +197,6 @@ body.role-camera [data-only=remote] { display: none !important; }
     padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 12px 16px;
   }
   #toast { bottom: 16px; }
+  #controls { bottom: 6px; padding: 2px 10px; }
+  .control { min-height: 34px; }
 }

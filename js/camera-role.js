@@ -1,5 +1,6 @@
-import { $, store, toast, showMessage, flash, setStatus, renderLockButtons } from './ui.js';
+import { $, store, toast, showMessage, flash, setStatus } from './ui.js';
 import { Camera } from './camera.js';
+import { ControlsPanel, withDefaults } from './controls.js';
 import { CameraLink } from './link.js';
 import { pairFromUrl, pairString } from './signal.js';
 import { asFrameFile, browserStorageSink } from './frames.js';
@@ -19,10 +20,11 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
   const camera = new Camera($('video'));
   let link = null;
   let capturing = false;
-  let lockChanging = false;
   let scanning = false;
   let captureSource = store.get('source', 'photo');
   let screenWakeLock = null;
+  const controlsPanel = new ControlsPanel($('controls'), changeControls);
+  camera.controls = withDefaults(store.get('controls', null));
 
   const sink = await browserStorageSink();
   frames.load(await sink.loadContiguous());
@@ -30,12 +32,10 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
 
   actions.capture = capture;
   actions.undo = deleteLastFrame;
-  actions.toggleExposureLock = () => toggleLock('AE', (on) => camera.setExposureLocked(on), camera.exposureLocked);
-  actions.toggleFocusLock = () => toggleLock('AF', (on) => camera.setFocusLocked(on), camera.focusLocked);
   actions.onSettingsOpen = renderCameraSettings;
   bindCameraSettings();
   bindLinkControls();
-  camera.addEventListener('change', () => { renderLockButtons(camera); sendState(); });
+  camera.addEventListener('change', () => { controlsPanel.render(camera.controlRanges, camera.controls); sendState(); });
   frames.addEventListener('change', forwardFrameChange);
   document.addEventListener('visibilitychange', resumeWhenVisible);
 
@@ -83,17 +83,10 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
     toast(`Deleted frame ${frames.count + 1}`);
   }
 
-  async function toggleLock(label, setLocked, currentlyLocked) {
-    if (lockChanging) return;
-    lockChanging = true;
-    $(label === 'AE' ? 'b-ae' : 'b-af').textContent = label + '…';
-    try {
-      const nowLocked = await setLocked(!currentlyLocked);
-      if (!currentlyLocked && !nowLocked) toast(`This camera does not allow ${label} lock from the browser`, ERROR_TOAST_MS);
-    } finally {
-      lockChanging = false;
-      renderLockButtons(camera);
-    }
+  function changeControls(change) {
+    const controls = { ...camera.controls, ...change };
+    store.set('controls', controls);
+    camera.setControls(controls);
   }
 
   async function keepScreenAwake() {
@@ -116,7 +109,6 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
       store.set('source', captureSource);
     };
     $('sel-lens').onchange = (e) => startCamera(e.target.value);
-    $('s-ev').oninput = (e) => camera.setExposureCompensation(+e.target.value);
     $('b-clear').onclick = () => {
       if (frames.count && confirm(`Delete all ${frames.count} frames?`)) frames.truncate(0);
     };
@@ -128,12 +120,6 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
 
   async function renderCameraSettings() {
     $('caminfo').textContent = camera.describe();
-    const range = camera.capabilities.exposureCompensation;
-    $('row-ev').hidden = !range;
-    if (range) {
-      Object.assign($('s-ev'), { min: range.min, max: range.max, step: range.step || 0.1 });
-      $('s-ev').value = camera.settings.exposureCompensation ?? 0;
-    }
     const lenses = await camera.lenses();
     $('sel-lens').replaceChildren(...lenses.map((lens, i) =>
       new Option(lens.label || `Camera ${i + 1}`, lens.deviceId, false, lens.deviceId === camera.deviceId)));
@@ -208,10 +194,8 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
     link?.wire?.send({
       type: 'state',
       count: frames.count,
-      exposureLocked: camera.exposureLocked,
-      focusLocked: camera.focusLocked,
-      info: camera.describe(),
-      camera: camera.diagnostics(),
+      controls: camera.controls,
+      ranges: camera.controlRanges,
       visible: document.visibilityState === 'visible',
     });
   }
@@ -234,9 +218,10 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
       sendState();
     }
     if (message.type === 'command') {
-      const commands = { capture, undo: deleteLastFrame, 'lock-exposure': actions.toggleExposureLock, 'lock-focus': actions.toggleFocusLock };
+      const commands = { capture, undo: deleteLastFrame };
       commands[message.command]?.();
     }
+    if (message.type === 'controls') changeControls(message.change);
   }
 }
 

@@ -12,8 +12,7 @@
 <body>
   <header id="top">
     <button id="b-onion" title="Onion skin frames (O)">Onion 1</button>
-    <button id="b-ae" title="Lock exposure and white balance (E)">AE</button>
-    <button id="b-af" title="Lock focus (F)">AF</button>
+    <button id="b-controls" title="Focus, exposure and white balance (C)">Camera</button>
     <button id="b-status" class="status" title="Link status"></button>
     <button id="b-menu" title="Settings">•••</button>
   </header>
@@ -24,6 +23,8 @@
       <canvas id="overlay"></canvas>
       <div id="flash"></div>
     </div>
+
+    <div id="controls" hidden></div>
 
     <div id="pairbox" class="panel" hidden>
       <div id="qr"></div>
@@ -64,7 +65,6 @@
         <option value="photo">Full-res photo</option>
         <option value="frame">Preview frame (faster)</option>
       </select></div>
-    <div class="row" data-only="camera" id="row-ev"><label for="s-ev">Exposure comp.</label><input id="s-ev" type="range"></div>
     <p class="dim small" data-only="camera" id="caminfo"></p>
     <div class="row" data-only="camera"><label>Laptop remote</label>
       <span><button id="b-pair">Pair (scan QR)</button> <button id="b-unpair">Disconnect</button></span></div>
@@ -80,7 +80,7 @@
     <hr>
     <p class="small dim">
       <a id="a-role" href="#"></a> ·
-      Keys: Space capture, Backspace undo, P play, O onion, E exposure lock, F focus lock. Press and hold the image to hide the overlay.
+      Keys: Space capture, Backspace undo, P play, O onion, C camera controls. Press and hold the image to hide the overlay.
     </p>
     <button id="b-close" class="wide">Close</button>
   </dialog>

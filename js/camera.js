@@ -1,37 +1,18 @@
 const PREVIEW_SIZE = { width: { ideal: 1920 }, height: { ideal: 1440 } };
 const JPEG_QUALITY = 0.95;
-const EXPOSURE_TIME_UNITS_PER_SECOND = 10_000;
-const SLOWEST_SHUTTER = EXPOSURE_TIME_UNITS_PER_SECOND / 30;
-const EXPOSURE_STEPS = 4;
-const WHITE_BALANCE_STEPS = 4;
-const CALIBRATION_SETTLE_MS = 250;
-const FOCUS_SETTLE_MS = 220;
-const LUMA_TOLERANCE = 3;
-const RED_BLUE_TOLERANCE = 0.02;
-const MIREDS_PER_KELVIN = 1e6;
-const DISPLAY_GAMMA = 2.2;
-const MEASURE_SIZE_PX = 32;
-const MEASURE_FRAMES = 3;
-const FOCUS_COARSE_STEPS = 7;
-const FOCUS_FINE_STEPS = 4;
-const SHARPNESS_SIZE_PX = 128;
-const DIAGNOSTIC_KEYS = [
-  'focusMode', 'focusDistance', 'exposureMode', 'exposureTime', 'iso', 'exposureCompensation',
-  'whiteBalanceMode', 'colorTemperature',
-];
+const LONGEST_SHUTTER = 10_000;
 
 export class Camera extends EventTarget {
   stream = null;
   track = null;
   deviceId = null;
-  exposureLocked = false;
-  focusLocked = false;
+  controls = null;
   #video;
   #imageCapture = null;
   #photoCapabilities = null;
   #photoOptionsRejected = false;
-  #exposureReport = '';
-  #focusReport = '';
+  #wantedControls = null;
+  #applyingControls = false;
 
   constructor(video) {
     super();
@@ -40,6 +21,21 @@ export class Camera extends EventTarget {
 
   get capabilities() { return this.track?.getCapabilities() ?? {}; }
   get settings() { return this.track?.getSettings() ?? {}; }
+
+  get controlRanges() {
+    const capabilities = this.capabilities;
+    const manualRange = (modeKey, valueKey, maxLimit = Infinity) => {
+      const range = capabilities[valueKey];
+      if (!capabilities[modeKey]?.includes('manual') || !range) return null;
+      return { min: range.min, max: Math.min(range.max, maxLimit), step: range.step };
+    };
+    return {
+      focusDistance: manualRange('focusMode', 'focusDistance'),
+      exposureTime: manualRange('exposureMode', 'exposureTime', LONGEST_SHUTTER),
+      iso: manualRange('exposureMode', 'iso'),
+      colorTemperature: manualRange('whiteBalanceMode', 'colorTemperature'),
+    };
+  }
 
   async start(deviceId) {
     this.stream?.getTracks().forEach((track) => track.stop());
@@ -52,8 +48,7 @@ export class Camera extends EventTarget {
     this.#imageCapture = 'ImageCapture' in window ? new ImageCapture(this.track) : null;
     this.#photoCapabilities = await this.#imageCapture?.getPhotoCapabilities().catch(() => null);
     this.#photoOptionsRejected = false;
-    this.exposureLocked = false;
-    this.focusLocked = false;
+    if (this.controls) await this.setControls(this.controls);
     this.#announceChange();
     return this.stream;
   }
@@ -63,36 +58,18 @@ export class Camera extends EventTarget {
     return devices.filter((device) => device.kind === 'videoinput');
   }
 
-  async setExposureLocked(locked) {
-    const autoLook = locked ? await this.#measurePreview() : null;
-    const modes = locked ? ['manual'] : ['continuous'];
-    const whiteBalanceMode = await this.#applyFirstSupported('whiteBalanceMode', modes);
-    const exposureMode = await this.#applyFirstSupported('exposureMode', modes);
-    this.exposureLocked = locked && Boolean(whiteBalanceMode || exposureMode);
-    this.#exposureReport = this.exposureLocked
-      ? await this.#matchLookTo(autoLook, { whiteBalanceMode, exposureMode })
-      : '';
+  async setControls(controls) {
+    this.#wantedControls = controls;
+    if (this.#applyingControls) return;
+    this.#applyingControls = true;
+    while (this.#wantedControls) {
+      const next = this.#wantedControls;
+      this.#wantedControls = null;
+      await this.#applyControls(next);
+      this.controls = next;
+    }
+    this.#applyingControls = false;
     this.#announceChange();
-    return this.exposureLocked;
-  }
-
-  async setFocusLocked(locked) {
-    const focusMode = await this.#applyFirstSupported('focusMode', locked ? ['manual', 'single-shot'] : ['continuous']);
-    this.focusLocked = locked && Boolean(focusMode);
-    this.#focusReport = this.focusLocked && focusMode === 'manual' && this.capabilities.focusDistance
-      ? await this.#focusOnSharpest()
-      : focusMode ?? '';
-    this.#announceChange();
-    return this.focusLocked;
-  }
-
-  diagnostics() {
-    const { capabilities, settings } = this;
-    return Object.fromEntries(DIAGNOSTIC_KEYS.map((key) => [key, { supported: capabilities[key], current: settings[key] }]));
-  }
-
-  async setExposureCompensation(value) {
-    await this.track.applyConstraints({ advanced: [{ exposureCompensation: value }] }).catch(console.warn);
   }
 
   async capture(source) {
@@ -109,150 +86,31 @@ export class Camera extends EventTarget {
       settings.width && `preview ${settings.width}×${settings.height}`,
       photo?.imageWidth?.max && `photo ${photo.imageWidth.max}×${photo.imageHeight.max}`,
       !this.#imageCapture && 'no Image Capture API, using preview frames',
-      this.exposureLocked && `AE locked: ${this.#exposureReport}`,
-      this.focusLocked && `AF locked: ${this.#focusReport}`,
     ].filter(Boolean).join(' · ');
   }
 
-  async #applyFirstSupported(modeKey, modes) {
-    for (const mode of modes.filter((m) => this.capabilities[modeKey]?.includes(m))) {
-      try {
-        await this.track.applyConstraints({ advanced: [{ [modeKey]: mode }] });
-        return mode;
-      } catch (error) {
-        console.warn('could not apply', modeKey, mode, error);
-      }
+  async #applyControls({ focus, exposure, whiteBalance }) {
+    const ranges = this.controlRanges;
+    const within = (value, range) => Math.min(range.max, Math.max(range.min, value));
+    const constraintSets = [];
+    if (ranges.focusDistance) {
+      constraintSets.push(focus.manual
+        ? { focusMode: 'manual', focusDistance: within(focus.distance, ranges.focusDistance) }
+        : { focusMode: 'continuous' });
     }
-    return null;
-  }
-
-  async #matchLookTo(autoLook, appliedModes) {
-    const report = [];
-    if (appliedModes.whiteBalanceMode === 'manual' && this.capabilities.colorTemperature) {
-      report.push(await this.#matchWhiteBalance(autoLook.redBlue));
+    if (ranges.exposureTime) {
+      constraintSets.push(exposure.manual
+        ? { exposureMode: 'manual', exposureTime: within(exposure.time, ranges.exposureTime), ...(ranges.iso && { iso: within(exposure.iso, ranges.iso) }) }
+        : { exposureMode: 'continuous' });
     }
-    if (appliedModes.exposureMode === 'manual' && this.capabilities.exposureTime) {
-      report.push(await this.#matchExposure(autoLook.luma));
+    if (ranges.colorTemperature) {
+      constraintSets.push(whiteBalance.manual
+        ? { whiteBalanceMode: 'manual', colorTemperature: within(whiteBalance.kelvin, ranges.colorTemperature) }
+        : { whiteBalanceMode: 'continuous' });
     }
-    const lockedLook = await this.#measurePreview();
-    report.push(`brightness ${autoLook.luma}→${lockedLook.luma}, red/blue ${autoLook.redBlue}→${lockedLook.redBlue}`);
-    return report.join(', ');
-  }
-
-  async #matchWhiteBalance(targetRedBlue) {
-    const range = this.capabilities.colorTemperature;
-    const toMired = (kelvin) => MIREDS_PER_KELVIN / kelvin;
-    const probe = async (mired) => {
-      const kelvin = this.#roundToStep(MIREDS_PER_KELVIN / mired, range);
-      const { redBlue } = await this.#applyAndMeasure({ whiteBalanceMode: 'manual', colorTemperature: kelvin });
-      return { mired: toMired(kelvin), kelvin, redBlue };
-    };
-    const span = toMired(range.min) - toMired(range.max);
-    let previous = await probe(toMired(range.max) + span / 4);
-    let latest = await probe(toMired(range.max) + (3 * span) / 4);
-    for (let step = 2; step < WHITE_BALANCE_STEPS && Math.abs(latest.redBlue - targetRedBlue) >= RED_BLUE_TOLERANCE; step++) {
-      const slope = (latest.redBlue - previous.redBlue) / (latest.mired - previous.mired);
-      if (!Number.isFinite(slope) || slope === 0) break;
-      const nextMired = clamp(latest.mired + (targetRedBlue - latest.redBlue) / slope, toMired(range.max), toMired(range.min));
-      [previous, latest] = [latest, await probe(nextMired)];
+    for (const constraints of constraintSets) {
+      await this.track.applyConstraints({ advanced: [constraints] }).catch((error) => console.warn(constraints, error));
     }
-    const best = Math.abs(previous.redBlue - targetRedBlue) < Math.abs(latest.redBlue - targetRedBlue) ? previous : latest;
-    if (best !== latest) await probe(best.mired);
-    return `${best.kelvin} K`;
-  }
-
-  async #matchExposure(targetLuma) {
-    const timeRange = this.capabilities.exposureTime;
-    const isoRange = this.capabilities.iso;
-    let exposureTime = this.settings.exposureTime || SLOWEST_SHUTTER / 4;
-    let iso = this.settings.iso || isoRange?.min;
-    const applyExposure = () => this.#applyAndMeasure({ exposureMode: 'manual', exposureTime, ...(iso && { iso }) });
-    let { luma } = await applyExposure();
-    for (let step = 1; step < EXPOSURE_STEPS && Math.abs(luma - targetLuma) >= LUMA_TOLERANCE; step++) {
-      const wanted = exposureTime * (targetLuma / Math.max(luma, 1)) ** DISPLAY_GAMMA;
-      exposureTime = clamp(wanted, timeRange.min, Math.min(timeRange.max, SLOWEST_SHUTTER));
-      if (iso && isoRange) iso = Math.round(clamp(iso * (wanted / exposureTime), isoRange.min, isoRange.max));
-      ({ luma } = await applyExposure());
-    }
-    return `1/${Math.round(EXPOSURE_TIME_UNITS_PER_SECOND / exposureTime)} s, ISO ${iso}`;
-  }
-
-  async #focusOnSharpest() {
-    const range = this.capabilities.focusDistance;
-    const nearest = 1 / range.min;
-    const farthest = 1 / range.max;
-    const sharpnessAt = async (diopters) => {
-      await this.track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: 1 / diopters }] }).catch(console.warn);
-      await new Promise((resolve) => setTimeout(resolve, FOCUS_SETTLE_MS));
-      return { diopters, sharpness: await this.#measureSharpness() };
-    };
-    const sweep = async (from, to, steps) => {
-      const probes = [];
-      for (let i = 0; i < steps; i++) probes.push(await sharpnessAt(from + ((to - from) * i) / (steps - 1)));
-      return probes.reduce((best, probe) => (probe.sharpness > best.sharpness ? probe : best));
-    };
-    const coarseSpacing = (nearest - farthest) / (FOCUS_COARSE_STEPS - 1);
-    const coarse = await sweep(farthest, nearest, FOCUS_COARSE_STEPS);
-    const fine = await sweep(
-      Math.max(farthest, coarse.diopters - coarseSpacing),
-      Math.min(nearest, coarse.diopters + coarseSpacing),
-      FOCUS_FINE_STEPS + 1);
-    const best = fine.sharpness >= coarse.sharpness ? fine : coarse;
-    await sharpnessAt(best.diopters);
-    return `focus ${(1 / best.diopters).toFixed(2)} m`;
-  }
-
-  async #measureSharpness() {
-    const canvas = new OffscreenCanvas(SHARPNESS_SIZE_PX, SHARPNESS_SIZE_PX);
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    await new Promise((resolve) => this.#video.requestVideoFrameCallback(resolve));
-    const { videoWidth: width, videoHeight: height } = this.#video;
-    context.drawImage(this.#video, width / 4, height / 4, width / 2, height / 2, 0, 0, SHARPNESS_SIZE_PX, SHARPNESS_SIZE_PX);
-    const pixels = context.getImageData(0, 0, SHARPNESS_SIZE_PX, SHARPNESS_SIZE_PX).data;
-    const gray = (x, y) => {
-      const i = (y * SHARPNESS_SIZE_PX + x) * 4;
-      return 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
-    };
-    let energy = 0;
-    for (let y = 1; y < SHARPNESS_SIZE_PX - 1; y++) {
-      for (let x = 1; x < SHARPNESS_SIZE_PX - 1; x++) {
-        const laplacian = 4 * gray(x, y) - gray(x - 1, y) - gray(x + 1, y) - gray(x, y - 1) - gray(x, y + 1);
-        energy += laplacian * laplacian;
-      }
-    }
-    return energy;
-  }
-
-  async #applyAndMeasure(constraints) {
-    await this.track.applyConstraints({ advanced: [constraints] }).catch(console.warn);
-    await new Promise((resolve) => setTimeout(resolve, CALIBRATION_SETTLE_MS));
-    return this.#measurePreview();
-  }
-
-  async #measurePreview() {
-    const canvas = new OffscreenCanvas(MEASURE_SIZE_PX, MEASURE_SIZE_PX);
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    let [red, green, blue] = [0, 0, 0];
-    for (let frame = 0; frame < MEASURE_FRAMES; frame++) {
-      await new Promise((resolve) => this.#video.requestVideoFrameCallback(resolve));
-      context.drawImage(this.#video, 0, 0, MEASURE_SIZE_PX, MEASURE_SIZE_PX);
-      const pixels = context.getImageData(0, 0, MEASURE_SIZE_PX, MEASURE_SIZE_PX).data;
-      for (let i = 0; i < pixels.length; i += 4) {
-        red += pixels[i];
-        green += pixels[i + 1];
-        blue += pixels[i + 2];
-      }
-    }
-    const samples = MEASURE_FRAMES * MEASURE_SIZE_PX * MEASURE_SIZE_PX;
-    return {
-      luma: Math.round((0.299 * red + 0.587 * green + 0.114 * blue) / samples),
-      redBlue: +(red / Math.max(blue, 1)).toFixed(2),
-    };
-  }
-
-  #roundToStep(value, range) {
-    const step = range.step || 1;
-    return clamp(Math.round(value / step) * step, range.min, range.max);
   }
 
   async #takeFullResPhoto() {
@@ -279,8 +137,6 @@ export class Camera extends EventTarget {
     this.dispatchEvent(new Event('change'));
   }
 }
-
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 function grabPreviewFrame(video) {
   const canvas = new OffscreenCanvas(video.videoWidth, video.videoHeight);

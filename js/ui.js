@@ -39,13 +39,6 @@ export function flash() {
   overlay.classList.add('go');
 }
 
-export function renderLockButtons({ exposureLocked, focusLocked }) {
-  $('b-ae').classList.toggle('on', exposureLocked);
-  $('b-af').classList.toggle('on', focusLocked);
-  $('b-ae').textContent = 'AE';
-  $('b-af').textContent = 'AF';
-}
-
 export function setStatus([text, tone]) {
   $('b-status').textContent = text;
   $('b-status').className = 'status ' + tone;

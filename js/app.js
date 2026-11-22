@@ -17,7 +17,7 @@ navigator.serviceWorker?.register('sw.js');
 const role = detectRole();
 const frames = new FrameList();
 const viewer = new Viewer({ viewport: $('viewport'), stage: $('stage'), video: $('video'), canvas: $('overlay'), frames });
-const actions = { capture() {}, undo() {}, toggleExposureLock() {}, toggleFocusLock() {}, onSettingsOpen() {} };
+const actions = { capture() {}, undo() {}, onSettingsOpen() {} };
 
 restoreViewSettings();
 bindViewControls();
@@ -47,6 +47,8 @@ function detectRole() {
 }
 
 function restoreViewSettings() {
+  $('controls').hidden = !store.get('controlsOpen', false);
+  $('b-controls').classList.toggle('on', !$('controls').hidden);
   viewer.onionFrames = store.get('onion', 1);
   viewer.onionOpacity = store.get('opacity', 0.5);
   viewer.guideOpacity = store.get('guideOpacity', 0.5);
@@ -71,6 +73,12 @@ function cycleOnion() {
   renderViewControls();
 }
 
+function toggleControlsPanel() {
+  $('controls').hidden = !$('controls').hidden;
+  $('b-controls').classList.toggle('on', !$('controls').hidden);
+  store.set('controlsOpen', !$('controls').hidden);
+}
+
 function setPlayback(playing) {
   viewer.play(playing);
   renderViewControls();
@@ -93,8 +101,7 @@ function bindViewControls() {
   $('b-play').onclick = () => setPlayback(!viewer.playing);
   $('b-shutter').onclick = () => actions.capture();
   $('b-undo').onclick = () => actions.undo();
-  $('b-ae').onclick = () => actions.toggleExposureLock();
-  $('b-af').onclick = () => actions.toggleFocusLock();
+  $('b-controls').onclick = toggleControlsPanel;
   $('b-fps-down').onclick = () => changeFps(-1);
   $('b-fps-up').onclick = () => changeFps(1);
   $('s-opacity').oninput = (e) => {
@@ -148,8 +155,7 @@ function bindKeyboardShortcuts() {
     Delete: () => actions.undo(),
     p: () => setPlayback(!viewer.playing),
     o: cycleOnion,
-    e: () => actions.toggleExposureLock(),
-    f: () => actions.toggleFocusLock(),
+    c: toggleControlsPanel,
   };
   document.addEventListener('keydown', (e) => {
     if ($('settings').open || e.target.closest('input, select') || e.ctrlKey || e.metaKey || e.altKey) return;
