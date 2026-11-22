@@ -17,6 +17,7 @@ Keys on the remote: Space capture, Backspace undo, P play, O onion, C camera con
 - **What breaks it:** networks with client isolation (guest Wi-Fi), or a phone on mobile data, can't connect.
 
 ## Device notes
+- **Focus is in diopters:** Chrome on the Pixel passes `focusDistance` straight through as Android's lens focus value in diopters (1/m), not meters as the spec says. The slider is linear in diopters and shows the real distance (1/value).
 - **No auto-lock:** Chrome on the Pixel applies stale stored values when switching focus, exposure or white balance to manual, and never reports the live auto values, so "lock what auto chose" can't be done reliably. Manual controls are deterministic instead.
 - **Photo orientation:** some devices return Image Capture stills in sensor orientation. Stills whose orientation doesn't match the preview are rotated before saving.
 - **Full-res photos refocus:** on the Pixel, `takePhoto()` runs its own autofocus and ignores the preview's manual focus. In a real shoot it alternated between two focus distances on every capture. Capture therefore grabs preview frames (1440×1920) by default, which keep exactly the manual settings; full-res is still an option.
