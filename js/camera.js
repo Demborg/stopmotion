@@ -2,14 +2,17 @@ const PREVIEW_SIZE = { width: { ideal: 1920 }, height: { ideal: 1440 } };
 const JPEG_QUALITY = 0.95;
 const EXPOSURE_TIME_UNITS_PER_SECOND = 10_000;
 const SLOWEST_SHUTTER = EXPOSURE_TIME_UNITS_PER_SECOND / 30;
-const CALIBRATION_STEPS = 6;
-const CALIBRATION_SETTLE_MS = 350;
-const LUMA_TOLERANCE = 2;
+const EXPOSURE_STEPS = 4;
+const WHITE_BALANCE_STEPS = 4;
+const CALIBRATION_SETTLE_MS = 250;
+const FOCUS_SETTLE_MS = 220;
+const LUMA_TOLERANCE = 3;
 const RED_BLUE_TOLERANCE = 0.02;
+const MIREDS_PER_KELVIN = 1e6;
 const DISPLAY_GAMMA = 2.2;
 const MEASURE_SIZE_PX = 32;
 const MEASURE_FRAMES = 3;
-const FOCUS_COARSE_STEPS = 8;
+const FOCUS_COARSE_STEPS = 7;
 const FOCUS_FINE_STEPS = 4;
 const SHARPNESS_SIZE_PX = 128;
 const DIAGNOSTIC_KEYS = [
@@ -74,7 +77,7 @@ export class Camera extends EventTarget {
   }
 
   async setFocusLocked(locked) {
-    const focusMode = await this.#applyFirstSupported('focusMode', locked ? ['single-shot', 'manual'] : ['continuous']);
+    const focusMode = await this.#applyFirstSupported('focusMode', locked ? ['manual', 'single-shot'] : ['continuous']);
     this.focusLocked = locked && Boolean(focusMode);
     this.#focusReport = this.focusLocked && focusMode === 'manual' && this.capabilities.focusDistance
       ? await this.#focusOnSharpest()
@@ -138,16 +141,24 @@ export class Camera extends EventTarget {
 
   async #matchWhiteBalance(targetRedBlue) {
     const range = this.capabilities.colorTemperature;
-    let [low, high] = [range.min, range.max];
-    let kelvin = this.#roundToStep((low + high) / 2, range);
-    for (let step = 0; step < CALIBRATION_STEPS; step++) {
-      kelvin = this.#roundToStep((low + high) / 2, range);
+    const toMired = (kelvin) => MIREDS_PER_KELVIN / kelvin;
+    const probe = async (mired) => {
+      const kelvin = this.#roundToStep(MIREDS_PER_KELVIN / mired, range);
       const { redBlue } = await this.#applyAndMeasure({ whiteBalanceMode: 'manual', colorTemperature: kelvin });
-      if (Math.abs(redBlue - targetRedBlue) < RED_BLUE_TOLERANCE) break;
-      if (redBlue < targetRedBlue) low = kelvin;
-      else high = kelvin;
+      return { mired: toMired(kelvin), kelvin, redBlue };
+    };
+    const span = toMired(range.min) - toMired(range.max);
+    let previous = await probe(toMired(range.max) + span / 4);
+    let latest = await probe(toMired(range.max) + (3 * span) / 4);
+    for (let step = 2; step < WHITE_BALANCE_STEPS && Math.abs(latest.redBlue - targetRedBlue) >= RED_BLUE_TOLERANCE; step++) {
+      const slope = (latest.redBlue - previous.redBlue) / (latest.mired - previous.mired);
+      if (!Number.isFinite(slope) || slope === 0) break;
+      const nextMired = clamp(latest.mired + (targetRedBlue - latest.redBlue) / slope, toMired(range.max), toMired(range.min));
+      [previous, latest] = [latest, await probe(nextMired)];
     }
-    return `${kelvin} K`;
+    const best = Math.abs(previous.redBlue - targetRedBlue) < Math.abs(latest.redBlue - targetRedBlue) ? previous : latest;
+    if (best !== latest) await probe(best.mired);
+    return `${best.kelvin} K`;
   }
 
   async #matchExposure(targetLuma) {
@@ -155,12 +166,13 @@ export class Camera extends EventTarget {
     const isoRange = this.capabilities.iso;
     let exposureTime = this.settings.exposureTime || SLOWEST_SHUTTER / 4;
     let iso = this.settings.iso || isoRange?.min;
-    for (let step = 0; step < CALIBRATION_STEPS; step++) {
-      const { luma } = await this.#applyAndMeasure({ exposureMode: 'manual', exposureTime, ...(iso && { iso }) });
-      if (Math.abs(luma - targetLuma) < LUMA_TOLERANCE) break;
+    const applyExposure = () => this.#applyAndMeasure({ exposureMode: 'manual', exposureTime, ...(iso && { iso }) });
+    let { luma } = await applyExposure();
+    for (let step = 1; step < EXPOSURE_STEPS && Math.abs(luma - targetLuma) >= LUMA_TOLERANCE; step++) {
       const wanted = exposureTime * (targetLuma / Math.max(luma, 1)) ** DISPLAY_GAMMA;
       exposureTime = clamp(wanted, timeRange.min, Math.min(timeRange.max, SLOWEST_SHUTTER));
       if (iso && isoRange) iso = Math.round(clamp(iso * (wanted / exposureTime), isoRange.min, isoRange.max));
+      ({ luma } = await applyExposure());
     }
     return `1/${Math.round(EXPOSURE_TIME_UNITS_PER_SECOND / exposureTime)} s, ISO ${iso}`;
   }
@@ -171,7 +183,7 @@ export class Camera extends EventTarget {
     const farthest = 1 / range.max;
     const sharpnessAt = async (diopters) => {
       await this.track.applyConstraints({ advanced: [{ focusMode: 'manual', focusDistance: 1 / diopters }] }).catch(console.warn);
-      await new Promise((resolve) => setTimeout(resolve, CALIBRATION_SETTLE_MS));
+      await new Promise((resolve) => setTimeout(resolve, FOCUS_SETTLE_MS));
       return { diopters, sharpness: await this.#measureSharpness() };
     };
     const sweep = async (from, to, steps) => {
