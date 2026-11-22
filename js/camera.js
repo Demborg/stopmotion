@@ -12,24 +12,23 @@ const MEASURE_FRAMES = 3;
 const FOCUS_COARSE_STEPS = 8;
 const FOCUS_FINE_STEPS = 4;
 const SHARPNESS_SIZE_PX = 128;
-const LOCKABLE_CONTROLS = [
-  { mode: 'focusMode', label: 'focus', lockModes: ['manual', 'single-shot'], values: ['focusDistance'] },
-  { mode: 'exposureMode', label: 'exposure', lockModes: ['manual'], values: ['exposureTime', 'iso', 'exposureCompensation'] },
-  { mode: 'whiteBalanceMode', label: 'white balance', lockModes: ['manual'], values: ['colorTemperature'] },
+const DIAGNOSTIC_KEYS = [
+  'focusMode', 'focusDistance', 'exposureMode', 'exposureTime', 'iso', 'exposureCompensation',
+  'whiteBalanceMode', 'colorTemperature',
 ];
 
 export class Camera extends EventTarget {
   stream = null;
   track = null;
   deviceId = null;
-  locked = false;
+  exposureLocked = false;
+  focusLocked = false;
   #video;
   #imageCapture = null;
   #photoCapabilities = null;
   #photoOptionsRejected = false;
-  #lockedControls = [];
-  #unlockableControls = [];
-  #calibration = '';
+  #exposureReport = '';
+  #focusReport = '';
 
   constructor(video) {
     super();
@@ -50,7 +49,8 @@ export class Camera extends EventTarget {
     this.#imageCapture = 'ImageCapture' in window ? new ImageCapture(this.track) : null;
     this.#photoCapabilities = await this.#imageCapture?.getPhotoCapabilities().catch(() => null);
     this.#photoOptionsRejected = false;
-    this.locked = false;
+    this.exposureLocked = false;
+    this.focusLocked = false;
     this.#announceChange();
     return this.stream;
   }
@@ -60,24 +60,32 @@ export class Camera extends EventTarget {
     return devices.filter((device) => device.kind === 'videoinput');
   }
 
-  async setLocked(locked) {
+  async setExposureLocked(locked) {
     const autoLook = locked ? await this.#measurePreview() : null;
-    const results = [];
-    for (const control of LOCKABLE_CONTROLS) {
-      results.push({ control, mode: await this.#applyFirstSupported(control, locked ? control.lockModes : ['continuous']) });
-    }
-    this.locked = locked;
-    this.#lockedControls = results.filter((r) => r.mode).map((r) => `${r.control.label} (${r.mode})`);
-    this.#unlockableControls = results.filter((r) => !r.mode).map((r) => r.control.label);
-    this.#calibration = locked ? await this.#matchLockedLookTo(autoLook, results) : '';
+    const modes = locked ? ['manual'] : ['continuous'];
+    const whiteBalanceMode = await this.#applyFirstSupported('whiteBalanceMode', modes);
+    const exposureMode = await this.#applyFirstSupported('exposureMode', modes);
+    this.exposureLocked = locked && Boolean(whiteBalanceMode || exposureMode);
+    this.#exposureReport = this.exposureLocked
+      ? await this.#matchLookTo(autoLook, { whiteBalanceMode, exposureMode })
+      : '';
     this.#announceChange();
-    return this.#lockedControls.length > 0;
+    return this.exposureLocked;
+  }
+
+  async setFocusLocked(locked) {
+    const focusMode = await this.#applyFirstSupported('focusMode', locked ? ['single-shot', 'manual'] : ['continuous']);
+    this.focusLocked = locked && Boolean(focusMode);
+    this.#focusReport = this.focusLocked && focusMode === 'manual' && this.capabilities.focusDistance
+      ? await this.#focusOnSharpest()
+      : focusMode ?? '';
+    this.#announceChange();
+    return this.focusLocked;
   }
 
   diagnostics() {
     const { capabilities, settings } = this;
-    return Object.fromEntries(LOCKABLE_CONTROLS.flatMap((control) => [control.mode, ...control.values])
-      .map((key) => [key, { supported: capabilities[key], current: settings[key] }]));
+    return Object.fromEntries(DIAGNOSTIC_KEYS.map((key) => [key, { supported: capabilities[key], current: settings[key] }]));
   }
 
   async setExposureCompensation(value) {
@@ -98,39 +106,34 @@ export class Camera extends EventTarget {
       settings.width && `preview ${settings.width}×${settings.height}`,
       photo?.imageWidth?.max && `photo ${photo.imageWidth.max}×${photo.imageHeight.max}`,
       !this.#imageCapture && 'no Image Capture API, using preview frames',
-      this.locked && this.#lockedControls.length && 'locked: ' + this.#lockedControls.join(', '),
-      this.locked && this.#unlockableControls.length && 'not lockable: ' + this.#unlockableControls.join(', '),
-      this.locked && this.#calibration,
+      this.exposureLocked && `AE locked: ${this.#exposureReport}`,
+      this.focusLocked && `AF locked: ${this.#focusReport}`,
     ].filter(Boolean).join(' · ');
   }
 
-  async #applyFirstSupported(control, modes) {
-    for (const mode of modes.filter((m) => this.capabilities[control.mode]?.includes(m))) {
+  async #applyFirstSupported(modeKey, modes) {
+    for (const mode of modes.filter((m) => this.capabilities[modeKey]?.includes(m))) {
       try {
-        await this.track.applyConstraints({ advanced: [{ [control.mode]: mode }] });
+        await this.track.applyConstraints({ advanced: [{ [modeKey]: mode }] });
         return mode;
       } catch (error) {
-        console.warn('could not apply', control.mode, mode, error);
+        console.warn('could not apply', modeKey, mode, error);
       }
     }
     return null;
   }
 
-  async #matchLockedLookTo(autoLook, lockResults) {
-    const lockedManually = (mode) => lockResults.some((r) => r.control.mode === mode && r.mode === 'manual');
+  async #matchLookTo(autoLook, appliedModes) {
     const report = [];
-    if (lockedManually('focusMode') && this.capabilities.focusDistance) {
-      report.push(await this.#focusOnSharpest());
-    }
-    if (lockedManually('whiteBalanceMode') && this.capabilities.colorTemperature) {
+    if (appliedModes.whiteBalanceMode === 'manual' && this.capabilities.colorTemperature) {
       report.push(await this.#matchWhiteBalance(autoLook.redBlue));
     }
-    if (lockedManually('exposureMode') && this.capabilities.exposureTime) {
+    if (appliedModes.exposureMode === 'manual' && this.capabilities.exposureTime) {
       report.push(await this.#matchExposure(autoLook.luma));
     }
     const lockedLook = await this.#measurePreview();
     report.push(`brightness ${autoLook.luma}→${lockedLook.luma}, red/blue ${autoLook.redBlue}→${lockedLook.redBlue}`);
-    return report.join(' · ');
+    return report.join(', ');
   }
 
   async #matchWhiteBalance(targetRedBlue) {

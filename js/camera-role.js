@@ -1,4 +1,4 @@
-import { $, store, toast, showMessage, flash, setStatus } from './ui.js';
+import { $, store, toast, showMessage, flash, setStatus, renderLockButtons } from './ui.js';
 import { Camera } from './camera.js';
 import { CameraLink } from './link.js';
 import { pairFromUrl, pairString } from './signal.js';
@@ -30,11 +30,12 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
 
   actions.capture = capture;
   actions.undo = deleteLastFrame;
-  actions.toggleLock = toggleLock;
+  actions.toggleExposureLock = () => toggleLock('AE', (on) => camera.setExposureLocked(on), camera.exposureLocked);
+  actions.toggleFocusLock = () => toggleLock('AF', (on) => camera.setFocusLocked(on), camera.focusLocked);
   actions.onSettingsOpen = renderCameraSettings;
   bindCameraSettings();
   bindLinkControls();
-  camera.addEventListener('change', () => { renderLockButton(); sendState(); });
+  camera.addEventListener('change', () => { renderLockButtons(camera); sendState(); });
   frames.addEventListener('change', forwardFrameChange);
   document.addEventListener('visibilitychange', resumeWhenVisible);
 
@@ -82,22 +83,17 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
     toast(`Deleted frame ${frames.count + 1}`);
   }
 
-  async function toggleLock() {
+  async function toggleLock(label, setLocked, currentlyLocked) {
     if (lockChanging) return;
     lockChanging = true;
-    $('b-lock').textContent = camera.locked ? 'Unlocking…' : 'Locking…';
+    $(label === 'AE' ? 'b-ae' : 'b-af').textContent = label + '…';
     try {
-      const anyLocked = await camera.setLocked(!camera.locked);
-      if (camera.locked && !anyLocked) toast('This camera does not allow locking from the browser', ERROR_TOAST_MS);
+      const nowLocked = await setLocked(!currentlyLocked);
+      if (!currentlyLocked && !nowLocked) toast(`This camera does not allow ${label} lock from the browser`, ERROR_TOAST_MS);
     } finally {
       lockChanging = false;
-      renderLockButton();
+      renderLockButtons(camera);
     }
-  }
-
-  function renderLockButton() {
-    $('b-lock').classList.toggle('on', camera.locked);
-    $('b-lock').textContent = camera.locked ? 'Locked' : 'AE/AF';
   }
 
   async function keepScreenAwake() {
@@ -212,7 +208,8 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
     link?.wire?.send({
       type: 'state',
       count: frames.count,
-      locked: camera.locked,
+      exposureLocked: camera.exposureLocked,
+      focusLocked: camera.focusLocked,
       info: camera.describe(),
       camera: camera.diagnostics(),
       visible: document.visibilityState === 'visible',
@@ -237,7 +234,7 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
       sendState();
     }
     if (message.type === 'command') {
-      const commands = { capture, undo: deleteLastFrame, lock: toggleLock };
+      const commands = { capture, undo: deleteLastFrame, 'lock-exposure': actions.toggleExposureLock, 'lock-focus': actions.toggleFocusLock };
       commands[message.command]?.();
     }
   }

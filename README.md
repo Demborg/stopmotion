@@ -4,7 +4,7 @@ A plain stop-motion camera in one static page. It's built for Chrome on Android 
 
 Live at **https://demborg.se/stopmotion/**
 
-- **Phone only:** live view, onion skin, a guide-image overlay and playback. The AE/AF button locks exposure, focus and white balance. Shots are full-resolution stills from the Image Capture API, kept in IndexedDB across reloads. Export them as a zip of `0001.jpg…`.
+- **Phone only:** live view, onion skin, a guide-image overlay and playback. AE locks exposure and white balance (calibrated to match what auto exposure showed); AF locks focus. Shots are full-resolution stills from the Image Capture API, kept in IndexedDB across reloads. Export them as a zip of `0001.jpg…`.
 - **Phone + laptop:** open the page on the laptop and scan its QR with the phone (*Pair* in the menu, or the system camera app). The laptop gets the live preview with the onion skin, and can capture, undo and lock. With *Save to folder* it writes `0001.jpg…` straight to disk as frames arrive, and removes leftover numbered files from earlier shoots.
 
 Keys on the remote: Space capture, Backspace undo, P play, O onion, L lock. Press and hold the image to hide the overlay.

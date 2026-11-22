@@ -17,7 +17,7 @@ navigator.serviceWorker?.register('sw.js');
 const role = detectRole();
 const frames = new FrameList();
 const viewer = new Viewer({ viewport: $('viewport'), stage: $('stage'), video: $('video'), canvas: $('overlay'), frames });
-const actions = { capture() {}, undo() {}, toggleLock() {}, onSettingsOpen() {} };
+const actions = { capture() {}, undo() {}, toggleExposureLock() {}, toggleFocusLock() {}, onSettingsOpen() {} };
 
 restoreViewSettings();
 bindViewControls();
@@ -93,7 +93,8 @@ function bindViewControls() {
   $('b-play').onclick = () => setPlayback(!viewer.playing);
   $('b-shutter').onclick = () => actions.capture();
   $('b-undo').onclick = () => actions.undo();
-  $('b-lock').onclick = () => actions.toggleLock();
+  $('b-ae').onclick = () => actions.toggleExposureLock();
+  $('b-af').onclick = () => actions.toggleFocusLock();
   $('b-fps-down').onclick = () => changeFps(-1);
   $('b-fps-up').onclick = () => changeFps(1);
   $('s-opacity').oninput = (e) => {
@@ -147,7 +148,8 @@ function bindKeyboardShortcuts() {
     Delete: () => actions.undo(),
     p: () => setPlayback(!viewer.playing),
     o: cycleOnion,
-    l: () => actions.toggleLock(),
+    e: () => actions.toggleExposureLock(),
+    f: () => actions.toggleFocusLock(),
   };
   document.addEventListener('keydown', (e) => {
     if ($('settings').open || e.target.closest('input, select') || e.ctrlKey || e.metaKey || e.altKey) return;

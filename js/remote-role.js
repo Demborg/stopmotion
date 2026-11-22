@@ -1,4 +1,4 @@
-import { $, toast, showMessage, flash, setStatus } from './ui.js';
+import { $, toast, showMessage, flash, setStatus, renderLockButtons } from './ui.js';
 import { RemoteLink } from './link.js';
 import { pairString, parsePairString, pairUrl } from './signal.js';
 import { folderSink } from './frames.js';
@@ -15,12 +15,13 @@ const LINK_STATUS = {
 
 export async function startRemoteRole({ frames, actions, stopPlayback }) {
   const link = new RemoteLink();
-  let phone = { count: 0, locked: false, visible: true };
+  let phone = { count: 0, exposureLocked: false, focusLocked: false, visible: true };
   let qrDismissed = false;
 
   actions.capture = () => { stopPlayback(); sendCommand('capture'); };
   actions.undo = () => sendCommand('undo');
-  actions.toggleLock = () => sendCommand('lock');
+  actions.toggleExposureLock = () => sendCommand('lock-exposure');
+  actions.toggleFocusLock = () => sendCommand('lock-focus');
   $('b-shutter').title = 'Capture on phone (Space)';
   bindRemoteSettings();
 
@@ -50,8 +51,7 @@ export async function startRemoteRole({ frames, actions, stopPlayback }) {
 
   function render() {
     setStatus(statusFor());
-    $('b-lock').classList.toggle('on', phone.locked);
-    $('b-lock').textContent = phone.locked ? 'Locked' : 'AE/AF';
+    renderLockButtons(phone);
   }
 
   function statusFor() {
