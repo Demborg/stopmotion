@@ -19,6 +19,7 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
   const camera = new Camera($('video'));
   let link = null;
   let capturing = false;
+  let lockChanging = false;
   let scanning = false;
   let captureSource = store.get('source', 'photo');
   let screenWakeLock = null;
@@ -81,9 +82,17 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
     toast(`Deleted frame ${frames.count + 1}`);
   }
 
-  async function toggleLock(lockOptions) {
-    const anyLocked = await camera.setLocked(!camera.locked, lockOptions);
-    if (camera.locked && !anyLocked) toast('This camera does not allow locking from the browser', ERROR_TOAST_MS);
+  async function toggleLock() {
+    if (lockChanging) return;
+    lockChanging = true;
+    $('b-lock').textContent = camera.locked ? 'Unlocking…' : 'Locking…';
+    try {
+      const anyLocked = await camera.setLocked(!camera.locked);
+      if (camera.locked && !anyLocked) toast('This camera does not allow locking from the browser', ERROR_TOAST_MS);
+    } finally {
+      lockChanging = false;
+      renderLockButton();
+    }
   }
 
   function renderLockButton() {
@@ -228,7 +237,7 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
       sendState();
     }
     if (message.type === 'command') {
-      const commands = { capture, undo: deleteLastFrame, lock: () => toggleLock(message.lockOptions) };
+      const commands = { capture, undo: deleteLastFrame, lock: toggleLock };
       commands[message.command]?.();
     }
   }

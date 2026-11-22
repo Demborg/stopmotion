@@ -12,6 +12,8 @@ const ZIP_URL_LIFETIME_MS = 60_000;
 const ZIP_TOAST_MS = 60_000;
 const ERROR_TOAST_MS = 5000;
 
+navigator.serviceWorker?.register('sw.js');
+
 const role = detectRole();
 const frames = new FrameList();
 const viewer = new Viewer({ viewport: $('viewport'), stage: $('stage'), video: $('video'), canvas: $('overlay'), frames });
