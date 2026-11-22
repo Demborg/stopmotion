@@ -53,6 +53,7 @@ function restoreViewSettings() {
   viewer.onionOpacity = store.get('opacity', 0.5);
   viewer.guideOpacity = store.get('guideOpacity', 0.5);
   viewer.fps = store.get('fps', 12);
+  viewer.squareGuide = store.get('squareGuide', false);
 }
 
 function renderViewControls() {
@@ -62,6 +63,8 @@ function renderViewControls() {
   $('b-play').classList.toggle('on', viewer.playing);
   $('count').textContent = frames.count;
   $('o-fps').textContent = viewer.fps;
+  $('b-square').textContent = viewer.squareGuide ? 'On' : 'Off';
+  $('b-square').classList.toggle('on', viewer.squareGuide);
   $('s-opacity').value = viewer.onionOpacity;
   $('s-guide').value = viewer.guideOpacity;
 }
@@ -69,6 +72,13 @@ function renderViewControls() {
 function cycleOnion() {
   viewer.onionFrames = (viewer.onionFrames + 1) % (ONION_MAX + 1);
   store.set('onion', viewer.onionFrames);
+  viewer.draw();
+  renderViewControls();
+}
+
+function toggleSquareGuide() {
+  viewer.squareGuide = !viewer.squareGuide;
+  store.set('squareGuide', viewer.squareGuide);
   viewer.draw();
   renderViewControls();
 }
@@ -117,6 +127,7 @@ function bindViewControls() {
   $('b-guide').onclick = () => $('f-guide').click();
   $('f-guide').onchange = (e) => setGuideImage(e.target.files[0]);
   $('b-guideclear').onclick = () => setGuideImage(null);
+  $('b-square').onclick = toggleSquareGuide;
 }
 
 function bindSettingsDialog() {
@@ -156,6 +167,7 @@ function bindKeyboardShortcuts() {
     p: () => setPlayback(!viewer.playing),
     o: cycleOnion,
     c: toggleControlsPanel,
+    s: toggleSquareGuide,
   };
   document.addEventListener('keydown', (e) => {
     if ($('settings').open || e.target.closest('input, select') || e.ctrlKey || e.metaKey || e.altKey) return;

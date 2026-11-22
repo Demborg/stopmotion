@@ -7,7 +7,7 @@ Live at **https://demborg.se/stopmotion/**
 - **Phone only:** live view, onion skin, a guide-image overlay and playback. The *Camera* panel sets focus distance, shutter, ISO and white balance by hand (each group can be Auto). Settings are saved on the phone, so a reload or a later session uses exactly the same values, and the laptop can adjust them remotely. Shots are full-resolution stills from the Image Capture API, kept in IndexedDB across reloads. Export them as a zip of `0001.jpg…`.
 - **Phone + laptop:** open the page on the laptop and scan its QR with the phone (*Pair* in the menu, or the system camera app). The laptop gets the live preview with the onion skin, and can capture, undo and adjust the camera controls. With *Save to folder* it writes `0001.jpg…` straight to disk as frames arrive, and removes leftover numbered files from earlier shoots.
 
-Keys on the remote: Space capture, Backspace undo, P play, O onion, C camera controls. Press and hold the image to hide the overlay.
+Keys on the remote: Space capture, Backspace undo, P play, O onion, C camera controls, S square crop guide. Press and hold the image to hide the overlay.
 
 ## How pairing works
 - **The QR:** it encodes `#pair=<broker>.<room>.<key>`, a random room id plus a 128-bit AES-GCM key.

@@ -34,6 +34,7 @@ export class Camera extends EventTarget {
       exposureTime: manualRange('exposureMode', 'exposureTime', LONGEST_SHUTTER),
       iso: manualRange('exposureMode', 'iso'),
       colorTemperature: manualRange('whiteBalanceMode', 'colorTemperature'),
+      zoom: capabilities.zoom ? { min: capabilities.zoom.min, max: capabilities.zoom.max, step: capabilities.zoom.step } : null,
     };
   }
 
@@ -89,7 +90,7 @@ export class Camera extends EventTarget {
     ].filter(Boolean).join(' · ');
   }
 
-  async #applyControls({ focus, exposure, whiteBalance }) {
+  async #applyControls({ focus, exposure, whiteBalance, zoom }) {
     const ranges = this.controlRanges;
     const within = (value, range) => Math.min(range.max, Math.max(range.min, value));
     const constraintSets = [];
@@ -108,6 +109,7 @@ export class Camera extends EventTarget {
         ? { whiteBalanceMode: 'manual', colorTemperature: within(whiteBalance.kelvin, ranges.colorTemperature) }
         : { whiteBalanceMode: 'continuous' });
     }
+    if (ranges.zoom) constraintSets.push({ zoom: within(zoom.level, ranges.zoom) });
     for (const constraints of constraintSets) {
       await this.track.applyConstraints({ advanced: [constraints] }).catch((error) => console.warn(constraints, error));
     }

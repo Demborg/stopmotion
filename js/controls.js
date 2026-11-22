@@ -7,6 +7,7 @@ export const DEFAULT_CONTROLS = {
   focus: { manual: false, distance: 0.5 },
   exposure: { manual: false, time: EXPOSURE_TIME_UNITS_PER_SECOND / 60, iso: 100 },
   whiteBalance: { manual: false, kelvin: 4500 },
+  zoom: { manual: true, level: 1 },
 };
 
 export function withDefaults(saved) {
@@ -44,6 +45,7 @@ const ROWS = [
   { label: 'Shutter', group: 'exposure', key: 'time', range: 'exposureTime', scale: logarithmic, format: formatShutter, hasAutoToggle: true },
   { label: 'ISO', group: 'exposure', key: 'iso', range: 'iso', scale: logarithmic, format: (iso) => String(Math.round(iso)) },
   { label: 'White bal.', group: 'whiteBalance', key: 'kelvin', range: 'colorTemperature', scale: linear, format: (kelvin) => `${Math.round(kelvin / KELVIN_DISPLAY_STEP) * KELVIN_DISPLAY_STEP} K`, hasAutoToggle: true },
+  { label: 'Zoom', group: 'zoom', key: 'level', range: 'zoom', scale: linear, format: (level) => `${level.toFixed(1)}×` },
 ];
 
 export class ControlsPanel {

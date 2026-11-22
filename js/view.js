@@ -1,11 +1,14 @@
 const DEFAULT_ASPECT = { width: 3, height: 4 };
 const MAX_PIXEL_RATIO = 2;
+const SQUARE_GUIDE_SHADE = 'rgba(0, 0, 0, 0.35)';
+const SQUARE_GUIDE_LINE = 'rgba(255, 255, 255, 0.8)';
 
 export class Viewer {
   onionFrames = 1;
   onionOpacity = 0.5;
   guideImage = null;
   guideOpacity = 0.5;
+  squareGuide = false;
   fps = 12;
   playing = false;
   #viewport;
@@ -59,6 +62,7 @@ export class Viewer {
     if (generation !== this.#drawGeneration || this.playing) return;
     if (this.#adoptFrameAspect(bitmaps.at(-1))) return;
     this.#context.clearRect(0, 0, this.#canvas.width, this.#canvas.height);
+    if (this.squareGuide) this.#drawSquareGuide();
     if (this.#overlayHiddenWhilePressed) return;
     if (this.guideImage) this.#drawCovering(this.guideImage, this.guideOpacity);
     bitmaps.forEach((bitmap, k) => {
@@ -109,6 +113,23 @@ export class Viewer {
     if (this.#overlayHiddenWhilePressed === hidden) return;
     this.#overlayHiddenWhilePressed = hidden;
     this.draw();
+  }
+
+  #drawSquareGuide() {
+    const { width, height } = this.#canvas;
+    const side = Math.min(width, height);
+    const left = (width - side) / 2;
+    const top = (height - side) / 2;
+    const context = this.#context;
+    context.globalAlpha = 1;
+    context.fillStyle = SQUARE_GUIDE_SHADE;
+    context.fillRect(0, 0, width, top);
+    context.fillRect(0, top + side, width, height - top - side);
+    context.fillRect(0, top, left, side);
+    context.fillRect(left + side, top, width - left - side, side);
+    context.strokeStyle = SQUARE_GUIDE_LINE;
+    context.lineWidth = Math.max(1, Math.round(devicePixelRatio));
+    context.strokeRect(left, top, side, side);
   }
 
   #drawCovering(image, opacity) {
