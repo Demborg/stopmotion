@@ -1,9 +1,9 @@
 const PREVIEW_SIZE = { width: { ideal: 1920 }, height: { ideal: 1440 } };
 const JPEG_QUALITY = 0.95;
 const LOCKABLE_CONTROLS = [
-  { mode: 'focusMode', label: 'focus', pinnedValues: ['focusDistance'] },
-  { mode: 'exposureMode', label: 'exposure', pinnedValues: ['exposureTime', 'iso'] },
-  { mode: 'whiteBalanceMode', label: 'white balance', pinnedValues: ['colorTemperature'] },
+  { mode: 'focusMode', label: 'focus', lockModes: ['single-shot', 'manual'], values: ['focusDistance'] },
+  { mode: 'exposureMode', label: 'exposure', lockModes: ['manual'], values: ['exposureTime', 'iso', 'exposureCompensation'] },
+  { mode: 'whiteBalanceMode', label: 'white balance', lockModes: ['manual'], values: ['colorTemperature'] },
 ];
 
 export class Camera extends EventTarget {
@@ -47,17 +47,23 @@ export class Camera extends EventTarget {
     return devices.filter((device) => device.kind === 'videoinput');
   }
 
-  async setLocked(locked) {
-    const mode = locked ? 'manual' : 'continuous';
+  async setLocked(locked, { pinValues = false, focusLockMode } = {}) {
     const results = [];
     for (const control of LOCKABLE_CONTROLS) {
-      results.push({ control, ok: await this.#applyMode(control, mode, locked) });
+      const preferred = focusLockMode && control.mode === 'focusMode' ? [focusLockMode] : control.lockModes;
+      results.push({ control, mode: await this.#applyFirstSupported(control, locked ? preferred : ['continuous'], locked && pinValues) });
     }
     this.locked = locked;
-    this.#lockedControls = results.filter((r) => r.ok).map((r) => r.control.label);
-    this.#unlockableControls = results.filter((r) => !r.ok).map((r) => r.control.label);
+    this.#lockedControls = results.filter((r) => r.mode).map((r) => `${r.control.label} (${r.mode})`);
+    this.#unlockableControls = results.filter((r) => !r.mode).map((r) => r.control.label);
     this.#announceChange();
     return this.#lockedControls.length > 0;
+  }
+
+  diagnostics() {
+    const { capabilities, settings } = this;
+    return Object.fromEntries(LOCKABLE_CONTROLS.flatMap((control) => [control.mode, ...control.values])
+      .map((key) => [key, { supported: capabilities[key], current: settings[key] }]));
   }
 
   async setExposureCompensation(value) {
@@ -83,19 +89,17 @@ export class Camera extends EventTarget {
     ].filter(Boolean).join(' · ');
   }
 
-  async #applyMode(control, mode, pinCurrentValues) {
-    if (!this.capabilities[control.mode]?.includes(mode)) return false;
-    const attempts = [{ [control.mode]: mode }];
-    if (pinCurrentValues) attempts.unshift({ ...attempts[0], ...this.#currentValues(control.pinnedValues) });
-    for (const constraints of attempts) {
+  async #applyFirstSupported(control, modes, pinCurrentValues) {
+    for (const mode of modes.filter((m) => this.capabilities[control.mode]?.includes(m))) {
+      const constraints = { [control.mode]: mode, ...(pinCurrentValues && this.#currentValues(control.values)) };
       try {
         await this.track.applyConstraints({ advanced: [constraints] });
-        return true;
+        return mode;
       } catch (error) {
         console.warn('could not apply', constraints, error);
       }
     }
-    return false;
+    return null;
   }
 
   #currentValues(names) {

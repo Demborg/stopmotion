@@ -81,8 +81,8 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
     toast(`Deleted frame ${frames.count + 1}`);
   }
 
-  async function toggleLock() {
-    const anyLocked = await camera.setLocked(!camera.locked);
+  async function toggleLock(lockOptions) {
+    const anyLocked = await camera.setLocked(!camera.locked, lockOptions);
     if (camera.locked && !anyLocked) toast('This camera does not allow locking from the browser', ERROR_TOAST_MS);
   }
 
@@ -204,6 +204,8 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
       type: 'state',
       count: frames.count,
       locked: camera.locked,
+      info: camera.describe(),
+      camera: camera.diagnostics(),
       visible: document.visibilityState === 'visible',
     });
   }
@@ -226,7 +228,7 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
       sendState();
     }
     if (message.type === 'command') {
-      const commands = { capture, undo: deleteLastFrame, lock: toggleLock };
+      const commands = { capture, undo: deleteLastFrame, lock: () => toggleLock(message.lockOptions) };
       commands[message.command]?.();
     }
   }
