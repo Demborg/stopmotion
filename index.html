@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>Stop Motion</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="vendor/qrcode.js"></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <header id="top">
+    <button id="b-onion" title="Onion skin frames (O)">Onion 1</button>
+    <button id="b-lock" title="Lock exposure, focus and white balance (L)">AE/AF</button>
+    <button id="b-status" class="status" title="Link status"></button>
+    <button id="b-menu" title="Settings">•••</button>
+  </header>
+
+  <main id="viewport">
+    <div id="stage">
+      <video id="video" playsinline muted autoplay></video>
+      <canvas id="overlay"></canvas>
+      <div id="flash"></div>
+    </div>
+
+    <div id="pairbox" class="panel" hidden>
+      <div id="qr"></div>
+      <p>Scan with the phone: <b>Pair</b> in this app's menu, or the regular camera app.</p>
+      <p class="dim small" id="pairurl"></p>
+      <button id="b-pairhide">Hide</button>
+    </div>
+
+    <div id="scanbox" class="panel" hidden>
+      <p>Point the camera at the QR code on the laptop.</p>
+      <button id="b-scancancel">Cancel</button>
+    </div>
+
+    <div id="message" class="panel" hidden></div>
+  </main>
+
+  <footer id="bottom">
+    <button id="b-undo" title="Delete last frame (Backspace)">Undo</button>
+    <button id="b-shutter" title="Capture (Space)" aria-label="Capture"></button>
+    <button id="b-play" title="Play (P)">Play <span id="count">0</span></button>
+  </footer>
+
+  <div id="toast" hidden></div>
+
+  <section id="sheet" hidden>
+    <div class="sheet-inner">
+      <div class="row"><label>Onion frames</label>
+        <span class="stepper"><button data-step="onion:-1">−</button><output id="o-onion">1</output><button data-step="onion:1">+</button></span></div>
+      <div class="row"><label for="s-opacity">Onion opacity</label><input id="s-opacity" type="range" min="0.05" max="1" step="0.05"></div>
+      <div class="row"><label>Playback fps</label>
+        <span class="stepper"><button data-step="fps:-1">−</button><output id="o-fps">12</output><button data-step="fps:1">+</button></span></div>
+      <div class="row"><label>Guide image</label>
+        <span><button id="b-guide">Choose…</button> <button id="b-guideclear">Remove</button></span>
+        <input id="f-guide" type="file" accept="image/*" hidden></div>
+      <div class="row"><label for="s-guide">Guide opacity</label><input id="s-guide" type="range" min="0.05" max="1" step="0.05"></div>
+
+      <hr>
+      <div class="row" data-only="camera"><label for="sel-lens">Lens</label><select id="sel-lens"></select></div>
+      <div class="row" data-only="camera"><label for="sel-source">Capture</label>
+        <select id="sel-source">
+          <option value="photo">Full-res photo</option>
+          <option value="frame">Preview frame (faster)</option>
+        </select></div>
+      <div class="row" data-only="camera" id="row-ev"><label for="s-ev">Exposure comp.</label><input id="s-ev" type="range"></div>
+      <p class="dim small" data-only="camera" id="caminfo"></p>
+      <div class="row" data-only="camera"><label>Laptop remote</label>
+        <span><button id="b-pair">Pair (scan QR)</button> <button id="b-unpair">Disconnect</button></span></div>
+      <div class="row" data-only="remote"><label>Save to folder</label>
+        <span><button id="b-folder">Choose folder…</button> <span id="foldername" class="dim"></span></span></div>
+      <div class="row" data-only="remote"><label>Pairing</label><button id="b-showqr">Show QR</button></div>
+
+      <hr>
+      <div class="row"><label>Frames</label>
+        <span><button id="b-zip">Download zip</button> <button id="b-share" data-only="camera">Share</button> <button id="b-clear" data-only="camera">Clear all</button></span></div>
+      <div class="row" data-only="camera"><label>Display</label><button id="b-fs">Fullscreen</button></div>
+
+      <hr>
+      <p class="small dim">
+        <a id="a-role" href="#"></a> ·
+        Keys: Space capture, Backspace undo, P play, O onion, L lock. Press and hold the image to hide the overlay.
+      </p>
+      <button id="b-close" class="wide">Close</button>
+    </div>
+  </section>
+</body>
+</html>
