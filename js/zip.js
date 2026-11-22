@@ -1,68 +1,63 @@
-// Minimal "stored" (uncompressed) zip writer. JPEGs don't compress anyway.
+const LOCAL_HEADER_SIGNATURE = 0x04034b50;
+const CENTRAL_HEADER_SIGNATURE = 0x02014b50;
+const END_OF_CENTRAL_SIGNATURE = 0x06054b50;
+const LOCAL_HEADER_BYTES = 30;
+const CENTRAL_HEADER_BYTES = 46;
+const END_OF_CENTRAL_BYTES = 22;
+const ZIP_VERSION_2_0 = 20;
+const CRC32_POLYNOMIAL = 0xedb88320;
 
-const CRC_TABLE = (() => {
-  const t = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    t[n] = c >>> 0;
-  }
-  return t;
-})();
+const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let bit = 0; bit < 8; bit++) c = c & 1 ? CRC32_POLYNOMIAL ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
 
-function crc32(u8) {
+function crc32(bytes) {
   let c = 0xffffffff;
-  for (let i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 0xff] ^ (c >>> 8);
+  for (const byte of bytes) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
 
-export async function makeZip(files) {
-  const enc = new TextEncoder();
-  const d = new Date();
-  const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
-  const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
-  const parts = [];
-  const central = [];
+const dosTime = (d) => (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+const dosDate = (d) => ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+
+function header(bytes, fields) {
+  const view = new DataView(new ArrayBuffer(bytes));
+  for (const [offset, value, width] of fields) {
+    if (width === 4) view.setUint32(offset, value, true);
+    else view.setUint16(offset, value, true);
+  }
+  return view;
+}
+
+export async function makeUncompressedZip(entries) {
+  const now = new Date();
+  const time = dosTime(now);
+  const date = dosDate(now);
+  const localParts = [];
+  const centralParts = [];
   let offset = 0;
 
-  for (const { name, blob } of files) {
-    const data = new Uint8Array(await blob.arrayBuffer());
-    const crc = crc32(data);
-    const nm = enc.encode(name);
-
-    const lh = new DataView(new ArrayBuffer(30));
-    lh.setUint32(0, 0x04034b50, true);
-    lh.setUint16(4, 20, true);
-    lh.setUint16(10, time, true);
-    lh.setUint16(12, date, true);
-    lh.setUint32(14, crc, true);
-    lh.setUint32(18, data.length, true);
-    lh.setUint32(22, data.length, true);
-    lh.setUint16(26, nm.length, true);
-    parts.push(lh, nm, blob);
-
-    const ch = new DataView(new ArrayBuffer(46));
-    ch.setUint32(0, 0x02014b50, true);
-    ch.setUint16(4, 20, true);
-    ch.setUint16(6, 20, true);
-    ch.setUint16(12, time, true);
-    ch.setUint16(14, date, true);
-    ch.setUint32(16, crc, true);
-    ch.setUint32(20, data.length, true);
-    ch.setUint32(24, data.length, true);
-    ch.setUint16(28, nm.length, true);
-    ch.setUint32(42, offset, true);
-    central.push(ch, nm);
-
-    offset += 30 + nm.length + data.length;
+  for (const { name, file } of entries) {
+    const crc = crc32(new Uint8Array(await file.arrayBuffer()));
+    const nameBytes = new TextEncoder().encode(name);
+    const size = file.size;
+    localParts.push(header(LOCAL_HEADER_BYTES, [
+      [0, LOCAL_HEADER_SIGNATURE, 4], [4, ZIP_VERSION_2_0], [10, time], [12, date],
+      [14, crc, 4], [18, size, 4], [22, size, 4], [26, nameBytes.length],
+    ]), nameBytes, file);
+    centralParts.push(header(CENTRAL_HEADER_BYTES, [
+      [0, CENTRAL_HEADER_SIGNATURE, 4], [4, ZIP_VERSION_2_0], [6, ZIP_VERSION_2_0], [12, time], [14, date],
+      [16, crc, 4], [20, size, 4], [24, size, 4], [28, nameBytes.length], [42, offset, 4],
+    ]), nameBytes);
+    offset += LOCAL_HEADER_BYTES + nameBytes.length + size;
   }
 
-  const cdSize = central.reduce((s, p) => s + p.byteLength, 0);
-  const end = new DataView(new ArrayBuffer(22));
-  end.setUint32(0, 0x06054b50, true);
-  end.setUint16(8, files.length, true);
-  end.setUint16(10, files.length, true);
-  end.setUint32(12, cdSize, true);
-  end.setUint32(16, offset, true);
-  return new Blob([...parts, ...central, end], { type: 'application/zip' });
+  const centralSize = centralParts.reduce((sum, part) => sum + part.byteLength, 0);
+  const end = header(END_OF_CENTRAL_BYTES, [
+    [0, END_OF_CENTRAL_SIGNATURE, 4], [8, entries.length], [10, entries.length],
+    [12, centralSize, 4], [16, offset, 4],
+  ]);
+  return new Blob([...localParts, ...centralParts, end], { type: 'application/zip' });
 }

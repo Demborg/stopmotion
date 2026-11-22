@@ -1,146 +1,152 @@
-// Phone camera: preview stream, 3A lock (exposure / focus / white balance)
-// and full-resolution stills via the Image Capture API.
-
-const LOCK_KEYS = [
-  // [mode key, value keys to pin while locked]
-  ['focusMode', ['focusDistance']],
-  ['exposureMode', ['exposureTime', 'iso']],
-  ['whiteBalanceMode', ['colorTemperature']],
+const PREVIEW_SIZE = { width: { ideal: 1920 }, height: { ideal: 1440 } };
+const JPEG_QUALITY = 0.95;
+const LOCKABLE_CONTROLS = [
+  { mode: 'focusMode', label: 'focus', pinnedValues: ['focusDistance'] },
+  { mode: 'exposureMode', label: 'exposure', pinnedValues: ['exposureTime', 'iso'] },
+  { mode: 'whiteBalanceMode', label: 'white balance', pinnedValues: ['colorTemperature'] },
 ];
 
 export class Camera extends EventTarget {
+  stream = null;
+  track = null;
+  deviceId = null;
+  locked = false;
+  #video;
+  #imageCapture = null;
+  #photoCapabilities = null;
+  #photoOptionsRejected = false;
+  #lockedControls = [];
+  #unlockableControls = [];
+
   constructor(video) {
     super();
-    this.video = video;
-    this.stream = null;
-    this.track = null;
-    this.ic = null;
-    this.photoCaps = null;
-    this.locked = false;
-    this.lockDetail = {};
+    this.#video = video;
   }
-  emit(type) { this.dispatchEvent(new Event(type)); }
+
+  get capabilities() { return this.track?.getCapabilities() ?? {}; }
+  get settings() { return this.track?.getSettings() ?? {}; }
 
   async start(deviceId) {
-    this.stream?.getTracks().forEach((t) => t.stop());
-    const size = { width: { ideal: 1920 }, height: { ideal: 1440 } };
-    const video = deviceId
-      ? { deviceId: { exact: deviceId }, ...size }
-      : { facingMode: { ideal: 'environment' }, ...size };
-    this.stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+    this.stream?.getTracks().forEach((track) => track.stop());
+    const lens = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: 'environment' } };
+    this.stream = await navigator.mediaDevices.getUserMedia({ video: { ...lens, ...PREVIEW_SIZE }, audio: false });
     this.track = this.stream.getVideoTracks()[0];
     this.deviceId = this.track.getSettings().deviceId;
-    this.video.srcObject = this.stream;
-    await this.video.play().catch(() => {});
-    this.ic = 'ImageCapture' in window ? new ImageCapture(this.track) : null;
-    this.photoCaps = null;
-    if (this.ic) {
-      try { this.photoCaps = await this.ic.getPhotoCapabilities(); } catch (e) { console.warn(e); }
-    }
+    this.#video.srcObject = this.stream;
+    await this.#video.play().catch(() => {});
+    this.#imageCapture = 'ImageCapture' in window ? new ImageCapture(this.track) : null;
+    this.#photoCapabilities = await this.#imageCapture?.getPhotoCapabilities().catch(() => null);
+    this.#photoOptionsRejected = false;
     this.locked = false;
-    this.lockDetail = {};
-    this.emit('change');
+    this.#announceChange();
     return this.stream;
   }
 
-  async devices() {
-    return (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+  async lenses() {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices.filter((device) => device.kind === 'videoinput');
   }
-  get caps() { try { return this.track?.getCapabilities?.() || {}; } catch { return {}; } }
-  get settings() { try { return this.track?.getSettings() || {}; } catch { return {}; } }
 
-  // Lock = switch each supported 3A mode to 'manual', pinning the current values
-  // where the browser reports them. Unlock = back to 'continuous'.
-  async setLock(on) {
-    const caps = this.caps;
-    const cur = this.settings;
-    const detail = {};
-    for (const [k, valueKeys] of LOCK_KEYS) {
-      const mode = on ? 'manual' : 'continuous';
-      if (!caps[k]?.includes(mode)) { detail[k] = false; continue; }
-      const pinned = { [k]: mode };
-      if (on) for (const v of valueKeys) if (cur[v] != null && caps[v]) pinned[v] = cur[v];
-      try {
-        await this.track.applyConstraints({ advanced: [pinned] });
-        detail[k] = true;
-      } catch (e) {
-        try {
-          await this.track.applyConstraints({ advanced: [{ [k]: mode }] });
-          detail[k] = true;
-        } catch (e2) {
-          console.warn('lock', k, e2);
-          detail[k] = false;
-        }
-      }
+  async setLocked(locked) {
+    const mode = locked ? 'manual' : 'continuous';
+    const results = [];
+    for (const control of LOCKABLE_CONTROLS) {
+      results.push({ control, ok: await this.#applyMode(control, mode, locked) });
     }
-    this.locked = on;
-    this.lockDetail = detail;
-    this.emit('change');
-    return detail;
+    this.locked = locked;
+    this.#lockedControls = results.filter((r) => r.ok).map((r) => r.control.label);
+    this.#unlockableControls = results.filter((r) => !r.ok).map((r) => r.control.label);
+    this.#announceChange();
+    return this.#lockedControls.length > 0;
   }
 
-  async setExposureComp(v) {
-    try { await this.track.applyConstraints({ advanced: [{ exposureCompensation: v }] }); } catch (e) { console.warn(e); }
+  async setExposureCompensation(value) {
+    await this.track.applyConstraints({ advanced: [{ exposureCompensation: value }] }).catch(console.warn);
   }
 
-  // source: 'photo' (full sensor still) or 'frame' (grab from the preview stream)
   async capture(source) {
-    let blob;
-    if (source !== 'frame' && this.ic) {
-      const pc = this.photoCaps;
-      const s = {};
-      if (pc?.imageWidth?.max) { s.imageWidth = pc.imageWidth.max; s.imageHeight = pc.imageHeight.max; }
-      if (pc?.fillLightMode?.includes('off')) s.fillLightMode = 'off';
-      try {
-        blob = await this.ic.takePhoto(this.photoOptionsFailed ? undefined : s);
-      } catch (e) {
-        console.warn('takePhoto failed, retrying', e);
-        if (!this.photoOptionsFailed) {
-          this.photoOptionsFailed = true;
-          try { blob = await this.ic.takePhoto(); } catch (e2) { console.warn(e2); }
-        }
-        if (!blob) blob = await grab(this.video);
-      }
-    } else {
-      blob = await grab(this.video);
-    }
-    return matchOrientation(blob, this.video.videoWidth, this.video.videoHeight);
+    const still = source === 'photo' && this.#imageCapture
+      ? await this.#takeFullResPhoto()
+      : await grabPreviewFrame(this.#video);
+    return rotateStillToPreviewOrientation(still, this.#video.videoWidth, this.#video.videoHeight);
   }
 
   describe() {
-    const s = this.settings;
-    const parts = [];
-    if (s.width) parts.push(`preview ${s.width}×${s.height}`);
-    const pc = this.photoCaps;
-    if (pc?.imageWidth?.max) parts.push(`photo ${pc.imageWidth.max}×${pc.imageHeight.max}`);
-    if (!this.ic) parts.push('no Image Capture API (using preview frames)');
-    if (this.locked) {
-      const names = { focusMode: 'focus', exposureMode: 'exposure', whiteBalanceMode: 'white balance' };
-      const ok = Object.entries(this.lockDetail).filter(([, v]) => v).map(([k]) => names[k]);
-      const bad = Object.entries(this.lockDetail).filter(([, v]) => !v).map(([k]) => names[k]);
-      if (ok.length) parts.push('locked: ' + ok.join(', '));
-      if (bad.length) parts.push('not lockable: ' + bad.join(', '));
+    const settings = this.settings;
+    const photo = this.#photoCapabilities;
+    return [
+      settings.width && `preview ${settings.width}×${settings.height}`,
+      photo?.imageWidth?.max && `photo ${photo.imageWidth.max}×${photo.imageHeight.max}`,
+      !this.#imageCapture && 'no Image Capture API, using preview frames',
+      this.locked && this.#lockedControls.length && 'locked: ' + this.#lockedControls.join(', '),
+      this.locked && this.#unlockableControls.length && 'not lockable: ' + this.#unlockableControls.join(', '),
+    ].filter(Boolean).join(' · ');
+  }
+
+  async #applyMode(control, mode, pinCurrentValues) {
+    if (!this.capabilities[control.mode]?.includes(mode)) return false;
+    const attempts = [{ [control.mode]: mode }];
+    if (pinCurrentValues) attempts.unshift({ ...attempts[0], ...this.#currentValues(control.pinnedValues) });
+    for (const constraints of attempts) {
+      try {
+        await this.track.applyConstraints({ advanced: [constraints] });
+        return true;
+      } catch (error) {
+        console.warn('could not apply', constraints, error);
+      }
     }
-    return parts.join(' · ');
+    return false;
+  }
+
+  #currentValues(names) {
+    const { settings, capabilities } = this;
+    return Object.fromEntries(names.filter((n) => settings[n] != null && capabilities[n]).map((n) => [n, settings[n]]));
+  }
+
+  async #takeFullResPhoto() {
+    if (!this.#photoOptionsRejected) {
+      try {
+        return await this.#imageCapture.takePhoto(this.#fullResPhotoSettings());
+      } catch (error) {
+        console.warn('takePhoto rejected full-res options', error);
+        this.#photoOptionsRejected = true;
+      }
+    }
+    return this.#imageCapture.takePhoto().catch(() => grabPreviewFrame(this.#video));
+  }
+
+  #fullResPhotoSettings() {
+    const photo = this.#photoCapabilities;
+    return {
+      ...(photo?.imageWidth?.max && { imageWidth: photo.imageWidth.max, imageHeight: photo.imageHeight.max }),
+      ...(photo?.fillLightMode?.includes('off') && { fillLightMode: 'off' }),
+    };
+  }
+
+  #announceChange() {
+    this.dispatchEvent(new Event('change'));
   }
 }
 
-async function grab(video) {
-  const c = new OffscreenCanvas(video.videoWidth, video.videoHeight);
-  c.getContext('2d').drawImage(video, 0, 0);
-  return c.convertToBlob({ type: 'image/jpeg', quality: 0.95 });
+function grabPreviewFrame(video) {
+  const canvas = new OffscreenCanvas(video.videoWidth, video.videoHeight);
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  return canvas.convertToBlob({ type: 'image/jpeg', quality: JPEG_QUALITY });
 }
 
-// Some devices return stills in sensor orientation; rotate to match the preview.
-async function matchOrientation(blob, vw, vh) {
-  if (!vw || !vh) return blob;
-  const bmp = await createImageBitmap(blob);
-  if ((bmp.height > bmp.width) === (vh > vw)) { bmp.close(); return blob; }
-  const c = new OffscreenCanvas(bmp.height, bmp.width);
-  const ctx = c.getContext('2d');
-  ctx.translate(bmp.height, 0);
-  ctx.rotate(Math.PI / 2);
-  ctx.drawImage(bmp, 0, 0);
-  bmp.close();
-  return c.convertToBlob({ type: 'image/jpeg', quality: 0.95 });
+async function rotateStillToPreviewOrientation(still, previewWidth, previewHeight) {
+  if (!previewWidth || !previewHeight) return still;
+  const bitmap = await createImageBitmap(still);
+  const sameOrientation = (bitmap.height > bitmap.width) === (previewHeight > previewWidth);
+  if (sameOrientation) {
+    bitmap.close();
+    return still;
+  }
+  const canvas = new OffscreenCanvas(bitmap.height, bitmap.width);
+  const context = canvas.getContext('2d');
+  context.translate(bitmap.height, 0);
+  context.rotate(Math.PI / 2);
+  context.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return canvas.convertToBlob({ type: 'image/jpeg', quality: JPEG_QUALITY });
 }

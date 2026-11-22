@@ -42,50 +42,46 @@
   <footer id="bottom">
     <button id="b-undo" title="Delete last frame (Backspace)">Undo</button>
     <button id="b-shutter" title="Capture (Space)" aria-label="Capture"></button>
-    <button id="b-play" title="Play (P)">Play <span id="count">0</span></button>
+    <button id="b-play" title="Play (P)"><span id="play-label">Play</span> <span id="count">0</span></button>
   </footer>
 
   <div id="toast" hidden></div>
 
-  <section id="sheet" hidden>
-    <div class="sheet-inner">
-      <div class="row"><label>Onion frames</label>
-        <span class="stepper"><button data-step="onion:-1">−</button><output id="o-onion">1</output><button data-step="onion:1">+</button></span></div>
-      <div class="row"><label for="s-opacity">Onion opacity</label><input id="s-opacity" type="range" min="0.05" max="1" step="0.05"></div>
-      <div class="row"><label>Playback fps</label>
-        <span class="stepper"><button data-step="fps:-1">−</button><output id="o-fps">12</output><button data-step="fps:1">+</button></span></div>
-      <div class="row"><label>Guide image</label>
-        <span><button id="b-guide">Choose…</button> <button id="b-guideclear">Remove</button></span>
-        <input id="f-guide" type="file" accept="image/*" hidden></div>
-      <div class="row"><label for="s-guide">Guide opacity</label><input id="s-guide" type="range" min="0.05" max="1" step="0.05"></div>
+  <dialog id="settings">
+    <div class="row"><label for="s-opacity">Onion opacity</label><input id="s-opacity" type="range" min="0.05" max="1" step="0.05"></div>
+    <div class="row"><label>Playback fps</label>
+      <span class="stepper"><button id="b-fps-down">−</button><output id="o-fps">12</output><button id="b-fps-up">+</button></span></div>
+    <div class="row"><label>Guide image</label>
+      <span><button id="b-guide">Choose…</button> <button id="b-guideclear">Remove</button></span>
+      <input id="f-guide" type="file" accept="image/*" hidden></div>
+    <div class="row"><label for="s-guide">Guide opacity</label><input id="s-guide" type="range" min="0.05" max="1" step="0.05"></div>
 
-      <hr>
-      <div class="row" data-only="camera"><label for="sel-lens">Lens</label><select id="sel-lens"></select></div>
-      <div class="row" data-only="camera"><label for="sel-source">Capture</label>
-        <select id="sel-source">
-          <option value="photo">Full-res photo</option>
-          <option value="frame">Preview frame (faster)</option>
-        </select></div>
-      <div class="row" data-only="camera" id="row-ev"><label for="s-ev">Exposure comp.</label><input id="s-ev" type="range"></div>
-      <p class="dim small" data-only="camera" id="caminfo"></p>
-      <div class="row" data-only="camera"><label>Laptop remote</label>
-        <span><button id="b-pair">Pair (scan QR)</button> <button id="b-unpair">Disconnect</button></span></div>
-      <div class="row" data-only="remote"><label>Save to folder</label>
-        <span><button id="b-folder">Choose folder…</button> <span id="foldername" class="dim"></span></span></div>
-      <div class="row" data-only="remote"><label>Pairing</label><button id="b-showqr">Show QR</button></div>
+    <hr>
+    <div class="row" data-only="camera"><label for="sel-lens">Lens</label><select id="sel-lens"></select></div>
+    <div class="row" data-only="camera"><label for="sel-source">Capture</label>
+      <select id="sel-source">
+        <option value="photo">Full-res photo</option>
+        <option value="frame">Preview frame (faster)</option>
+      </select></div>
+    <div class="row" data-only="camera" id="row-ev"><label for="s-ev">Exposure comp.</label><input id="s-ev" type="range"></div>
+    <p class="dim small" data-only="camera" id="caminfo"></p>
+    <div class="row" data-only="camera"><label>Laptop remote</label>
+      <span><button id="b-pair">Pair (scan QR)</button> <button id="b-unpair">Disconnect</button></span></div>
+    <div class="row" data-only="remote"><label>Save to folder</label>
+      <span><button id="b-folder">Choose folder…</button> <span id="foldername" class="dim"></span></span></div>
+    <div class="row" data-only="remote"><label>Pairing</label><button id="b-showqr">Show QR</button></div>
 
-      <hr>
-      <div class="row"><label>Frames</label>
-        <span><button id="b-zip">Download zip</button> <button id="b-share" data-only="camera">Share</button> <button id="b-clear" data-only="camera">Clear all</button></span></div>
-      <div class="row" data-only="camera"><label>Display</label><button id="b-fs">Fullscreen</button></div>
+    <hr>
+    <div class="row"><label>Frames</label>
+      <span><button id="b-zip">Download zip</button> <button id="b-clear" data-only="camera">Clear all</button></span></div>
+    <div class="row" data-only="camera"><label>Display</label><button id="b-fs">Fullscreen</button></div>
 
-      <hr>
-      <p class="small dim">
-        <a id="a-role" href="#"></a> ·
-        Keys: Space capture, Backspace undo, P play, O onion, L lock. Press and hold the image to hide the overlay.
-      </p>
-      <button id="b-close" class="wide">Close</button>
-    </div>
-  </section>
+    <hr>
+    <p class="small dim">
+      <a id="a-role" href="#"></a> ·
+      Keys: Space capture, Backspace undo, P play, O onion, L lock. Press and hold the image to hide the overlay.
+    </p>
+    <button id="b-close" class="wide">Close</button>
+  </dialog>
 </body>
 </html>

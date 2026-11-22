@@ -1,111 +1,121 @@
-// Ordered list of captured frames (JPEG blobs) with optional persistence sink
-// and a cache of downscaled bitmaps for onion skin / playback.
+const DOWNSCALED_WIDTH_PX = 720;
+const FRAME_FILE_PATTERN = /^(\d{4})\.jpg$/;
 
-const THUMB_W = 720;
+export const frameName = (index) => String(index + 1).padStart(4, '0') + '.jpg';
 
-export const frameName = (i) => String(i + 1).padStart(4, '0') + '.jpg';
+export const asFrameFile = (blob) =>
+  new File([blob], 'frame.jpg', { type: 'image/jpeg', lastModified: Date.now() });
 
 export class FrameList extends EventTarget {
-  constructor() {
-    super();
-    this.blobs = [];
-    this.thumbs = new Map();
-    this.sink = null;
-    this.q = Promise.resolve();
-  }
-  get count() { return this.blobs.length; }
+  files = [];
+  sink = null;
+  #downscaled = new Map();
+  #pendingWrites = Promise.resolve();
 
-  _emit(detail) { this.dispatchEvent(new CustomEvent('change', { detail })); }
-  _persist(fn) {
+  get count() { return this.files.length; }
+  get isComplete() { return Array.from(this.files).every(Boolean); }
+  get ids() { return Array.from(this.files, (file) => file?.lastModified ?? null); }
+  get zipEntries() { return this.files.map((file, index) => ({ name: frameName(index), file })); }
+
+  load(files) {
+    for (const index of this.#downscaled.keys()) this.#forgetDownscaled(index);
+    this.files = files;
+    this.#announce({ op: 'load' });
+  }
+
+  set(index, file) {
+    this.files[index] = file;
+    this.#forgetDownscaled(index);
+    this.#queueWrite((sink) => sink.put(index, file));
+    this.#announce({ op: 'set', index });
+  }
+
+  add(file) { this.set(this.count, file); }
+
+  truncate(count) {
+    const previousCount = this.count;
+    if (count >= previousCount) return;
+    this.files.length = count;
+    for (let index = count; index < previousCount; index++) this.#forgetDownscaled(index);
+    this.#queueWrite((sink) => sink.truncate(count));
+    this.#announce({ op: 'truncate', count });
+  }
+
+  attachSink(sink) {
+    this.sink = sink;
+    this.files.forEach((file, index) => this.#queueWrite((s) => s.put(index, file)));
+    this.#queueWrite((s) => s.truncate(this.count));
+    return this.#pendingWrites;
+  }
+
+  downscaled(index) {
+    const file = this.files[index];
+    if (!file) return Promise.resolve(null);
+    if (!this.#downscaled.has(index)) {
+      const bitmap = createImageBitmap(file, { resizeWidth: DOWNSCALED_WIDTH_PX, resizeQuality: 'medium' }).catch(() => null);
+      this.#downscaled.set(index, bitmap);
+    }
+    return this.#downscaled.get(index);
+  }
+
+  #announce(change) {
+    this.dispatchEvent(new CustomEvent('change', { detail: change }));
+  }
+
+  #queueWrite(write) {
     if (!this.sink) return;
-    this.q = this.q.then(fn).catch((e) => {
-      console.error(e);
-      this.dispatchEvent(new CustomEvent('error', { detail: e }));
+    const sink = this.sink;
+    this.#pendingWrites = this.#pendingWrites.then(() => write(sink)).catch((error) => {
+      console.error(error);
+      this.dispatchEvent(new CustomEvent('error', { detail: error }));
     });
   }
-  _drop(i) {
-    const p = this.thumbs.get(i);
-    this.thumbs.delete(i);
-    p?.then((b) => b?.close());
-  }
 
-  load(blobs) {
-    for (const i of [...this.thumbs.keys()]) this._drop(i);
-    this.blobs = blobs;
-    this._emit({ op: 'load' });
-  }
-  set(i, blob) {
-    this.blobs[i] = blob;
-    this._drop(i);
-    this._persist(() => this.sink.put(i, blob));
-    this._emit({ op: 'set', i });
-  }
-  add(blob) { this.set(this.count, blob); }
-  truncate(n) {
-    const old = this.count;
-    if (n >= old) return;
-    this.blobs.length = n;
-    for (let i = n; i < old; i++) this._drop(i);
-    this._persist(() => this.sink.truncate(n, old));
-    this._emit({ op: 'trunc', n });
-  }
-  // Write everything to a freshly attached sink.
-  flushTo(sink) {
-    this.sink = sink;
-    this.blobs.forEach((b, i) => b && this._persist(() => sink.put(i, b)));
-    return this.q;
-  }
-
-  thumb(i) {
-    const b = this.blobs[i];
-    if (!b) return Promise.resolve(null);
-    let p = this.thumbs.get(i);
-    if (!p) {
-      p = createImageBitmap(b, { resizeWidth: THUMB_W, resizeQuality: 'medium' }).catch(() => null);
-      this.thumbs.set(i, p);
-    }
-    return p;
+  #forgetDownscaled(index) {
+    this.#downscaled.get(index)?.then((bitmap) => bitmap?.close());
+    this.#downscaled.delete(index);
   }
 }
 
-// ---- IndexedDB sink (phone keeps its frames across reloads) ----------------
+const settle = (request) => new Promise((resolve, reject) => {
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
 
-const req = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
-
-export async function idbSink() {
-  const open = indexedDB.open('stopmo', 1);
-  open.onupgradeneeded = () => open.result.createObjectStore('frames');
-  const db = await req(open);
-  const st = (mode) => db.transaction('frames', mode).objectStore('frames');
+export async function browserStorageSink() {
+  const opening = indexedDB.open('stopmo', 1);
+  opening.onupgradeneeded = () => opening.result.createObjectStore('frames');
+  const db = await settle(opening);
+  const frameStore = (mode) => db.transaction('frames', mode).objectStore('frames');
   return {
-    async load() {
-      const s = st('readonly');
-      const [keys, vals] = await Promise.all([req(s.getAllKeys()), req(s.getAll())]);
-      const out = [];
-      keys.forEach((k, j) => { out[k] = vals[j]; });
-      let n = 0;
-      while (out[n]) n++;
-      return out.slice(0, n);
+    async loadContiguous() {
+      const store = frameStore('readonly');
+      const [keys, files] = await Promise.all([settle(store.getAllKeys()), settle(store.getAll())]);
+      const byIndex = [];
+      keys.forEach((key, i) => { byIndex[key] = files[i]; });
+      const firstGap = Array.from(byIndex).findIndex((file) => !file);
+      return firstGap === -1 ? byIndex : byIndex.slice(0, firstGap);
     },
-    put: (i, b) => req(st('readwrite').put(b, i)),
-    truncate: (n) => req(st('readwrite').delete(IDBKeyRange.lowerBound(n))),
+    put: (index, file) => settle(frameStore('readwrite').put(file, index)),
+    truncate: (count) => settle(frameStore('readwrite').delete(IDBKeyRange.lowerBound(count))),
   };
 }
 
-// ---- folder sink (laptop writes 0001.jpg... straight to disk) ----------------
-
-export function folderSink(dir) {
+export function folderSink(directory) {
   return {
-    async put(i, b) {
-      const fh = await dir.getFileHandle(frameName(i), { create: true });
-      const w = await fh.createWritable();
-      await w.write(b);
-      await w.close();
+    async put(index, file) {
+      const handle = await directory.getFileHandle(frameName(index), { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(file);
+      await writable.close();
     },
-    async truncate(n, old) {
-      for (let i = n; i < old; i++) {
-        await dir.removeEntry(frameName(i)).catch(() => {});
+    async truncate(count) {
+      const surplus = [];
+      for await (const name of directory.keys()) {
+        const number = FRAME_FILE_PATTERN.exec(name)?.[1];
+        if (number && +number > count) surplus.push(name);
       }
+      for (const name of surplus) await directory.removeEntry(name);
     },
   };
 }
