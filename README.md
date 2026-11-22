@@ -19,6 +19,7 @@ Keys on the remote: Space capture, Backspace undo, P play, O onion, C camera con
 ## Device notes
 - **No auto-lock:** Chrome on the Pixel applies stale stored values when switching focus, exposure or white balance to manual, and never reports the live auto values, so "lock what auto chose" can't be done reliably. Manual controls are deterministic instead.
 - **Photo orientation:** some devices return Image Capture stills in sensor orientation. Stills whose orientation doesn't match the preview are rotated before saving.
+- **Full-res photos refocus:** on the Pixel, `takePhoto()` runs its own autofocus and ignores the preview's manual focus. In a real shoot it alternated between two focus distances on every capture. Capture therefore grabs preview frames (1440×1920) by default, which keep exactly the manual settings; full-res is still an option.
 - **Full-res options rejected:** if `takePhoto` refuses the full-resolution options, the app retries without them and then falls back to a preview frame. *Capture → Preview frame* forces this; it's faster, and 1440×1920 is plenty for 1080p video.
 - **Uncompressed zip:** frames are already JPEGs, so compressing them again gains nothing.
 

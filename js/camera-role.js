@@ -21,7 +21,7 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
   let link = null;
   let capturing = false;
   let scanning = false;
-  let captureSource = store.get('source', 'photo');
+  let captureSource = store.get('captureSource', 'frame');
   let screenWakeLock = null;
   const controlsPanel = new ControlsPanel($('controls'), changeControls);
   camera.controls = withDefaults(store.get('controls', null));
@@ -106,7 +106,7 @@ export async function startCameraRole({ frames, actions, stopPlayback }) {
     $('sel-source').value = captureSource;
     $('sel-source').onchange = (e) => {
       captureSource = e.target.value;
-      store.set('source', captureSource);
+      store.set('captureSource', captureSource);
     };
     $('sel-lens').onchange = (e) => startCamera(e.target.value);
     $('b-clear').onclick = () => {
