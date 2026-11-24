@@ -96,7 +96,7 @@ export class Camera extends EventTarget {
     const constraintSets = [];
     if (ranges.focusDistance) {
       constraintSets.push(focus.manual
-        ? { focusMode: 'manual', focusDistance: within(focus.diopters, ranges.focusDistance) }
+        ? { focusMode: 'manual', focusDistance: within(focus.metres, ranges.focusDistance) }
         : { focusMode: 'continuous' });
     }
     if (ranges.exposureTime) {

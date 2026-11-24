@@ -4,7 +4,7 @@ const CENTIMETRES_PER_METRE = 100;
 const KELVIN_DISPLAY_STEP = 50;
 
 export const DEFAULT_CONTROLS = {
-  focus: { manual: false, diopters: 2 },
+  focus: { manual: false, metres: 0.5 },
   exposure: { manual: false, time: EXPOSURE_TIME_UNITS_PER_SECOND / 60, iso: 100 },
   whiteBalance: { manual: false, kelvin: 4500 },
   zoom: { manual: true, level: 1 },
@@ -12,13 +12,12 @@ export const DEFAULT_CONTROLS = {
 
 export function withDefaults(saved) {
   const merged = Object.fromEntries(Object.entries(DEFAULT_CONTROLS).map(([group, defaults]) => [group, { ...defaults, ...saved?.[group] }]));
-  return carryOverFocusSavedAsDistance(merged, saved);
+  return carryOverFocusSavedUnderOldKeys(merged);
 }
 
-function carryOverFocusSavedAsDistance(controls, saved) {
-  const { distance, ...focus } = controls.focus;
-  const savedDiopters = saved?.focus?.diopters ?? distance;
-  return { ...controls, focus: { ...focus, diopters: savedDiopters ?? focus.diopters } };
+function carryOverFocusSavedUnderOldKeys(controls) {
+  const { distance, diopters, ...focus } = controls.focus;
+  return { ...controls, focus: { ...focus, metres: distance ?? diopters ?? focus.metres } };
 }
 
 const logarithmic = (range) => ({
@@ -31,13 +30,7 @@ const linear = (range) => ({
   fromSlider: (position) => range.min + ((range.max - range.min) * position) / SLIDER_STEPS,
 });
 
-const nearToFar = (range) => ({
-  toSlider: (diopters) => (SLIDER_STEPS * (range.max - diopters)) / (range.max - range.min),
-  fromSlider: (position) => range.max - ((range.max - range.min) * position) / SLIDER_STEPS,
-});
-
-function formatFocus(diopters) {
-  const metres = 1 / diopters;
+function formatFocus(metres) {
   return metres < 1 ? `${Math.round(metres * CENTIMETRES_PER_METRE)} cm` : `${metres.toFixed(1)} m`;
 }
 
@@ -46,7 +39,7 @@ const formatShutter = (time) => time >= EXPOSURE_TIME_UNITS_PER_SECOND
   : `1/${Math.round(EXPOSURE_TIME_UNITS_PER_SECOND / time)} s`;
 
 const ROWS = [
-  { label: 'Focus', group: 'focus', key: 'diopters', range: 'focusDistance', scale: nearToFar, format: formatFocus, hasAutoToggle: true },
+  { label: 'Focus', group: 'focus', key: 'metres', range: 'focusDistance', scale: logarithmic, format: formatFocus, hasAutoToggle: true },
   { label: 'Shutter', group: 'exposure', key: 'time', range: 'exposureTime', scale: logarithmic, format: formatShutter, hasAutoToggle: true },
   { label: 'ISO', group: 'exposure', key: 'iso', range: 'iso', scale: logarithmic, format: (iso) => String(Math.round(iso)) },
   { label: 'White bal.', group: 'whiteBalance', key: 'kelvin', range: 'colorTemperature', scale: linear, format: (kelvin) => `${Math.round(kelvin / KELVIN_DISPLAY_STEP) * KELVIN_DISPLAY_STEP} K`, hasAutoToggle: true },
